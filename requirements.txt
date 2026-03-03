@@ -1,0 +1,6 @@
+# Python packages needed to run this
+langgraph
+langgraph-checkpoint-sqlite
+python-dotenv
+pytest
+unittest-xml-reporting

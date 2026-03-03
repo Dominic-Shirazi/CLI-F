@@ -1,0 +1,1 @@
+Claude SDK Error: 'Beta' object has no attribute 'prompt_caching'
