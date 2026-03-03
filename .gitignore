@@ -1,7 +1,15 @@
-
+# EndToEndDev orchestrator scratchpad — never part of the code diff
 workspace/gemini_output/reasoning.md
 workspace/current_task.md
-.test_folder/
-__pycache__/
-*.pyc
+audit_trail/
+status/
+system/checkpoints/
+brain/STATE.md
+brain/progress.txt
 .env
+.test_folder/
+
+# Python
+__pycache__/
+venv/
+*.pyc
