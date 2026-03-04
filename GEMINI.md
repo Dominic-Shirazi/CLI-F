@@ -1,9 +1,9 @@
 # Project Rules for Gemini CLI
 
 ## Environment
-- This project runs on Windows. Always activate the related venv or conda env before running Python:
-  `call venv\Scripts\activate.bat && <your command>` or `conda activate <env_name> && <your command>`
-- Never run commands without the activated venv or conda env as indicated in the MASTER_PLAN.md
+- This project runs on Windows. Always activate the related venv running Python or any tests`:
+  `call venv\Scripts\activate.bat && <your command>`
+- Never run commands without the activated venv as indicated in the MASTER_PLAN.md
 
 ## What You Are Allowed To Do
 - Read, create, edit, and delete files within the project workspace
