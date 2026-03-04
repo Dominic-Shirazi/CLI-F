@@ -13,8 +13,11 @@ def load_profile(profile_name: str) -> dict:
     with open(profile_path, "r", encoding="utf-8") as f:
         return json.load(f)
 
-def get_prompt_template(role: str, profile_name: str) -> str:
+def get_prompt_template(role: str) -> str:
     """Reads the prompt template path from the profile and returns the raw template string."""
+    from dotenv import load_dotenv
+    load_dotenv()
+    profile_name = os.getenv("ACTIVE_PROFILE", "coder-v2")
     profile = load_profile(profile_name)
     if role not in profile["roles"]:
         raise ValueError(f"Role '{role}' not defined in profile '{profile_name}'")
@@ -55,11 +58,16 @@ def trigger_session_refresh(state: AgentState):
         f.write(f"**Reason:** Session turn count reached or arch switch.\n")
         f.write(f"**Last Task:** {state.get('current_task', 'Unknown')}\n")
 
-def run_role(role: str, prompt: str, state: AgentState, session_id: Optional[str] = None, resume: bool = False, schema_json: Optional[str] = None, max_turns: int = 10) -> subprocess.CompletedProcess:
+def run_role(role: str, prompt: str, session_id: Optional[str] = None, resume: bool = False, schema_json: Optional[str] = None, max_turns: int = 10, state: Optional[AgentState] = None) -> subprocess.CompletedProcess:
     """Dispatches the correct CLI subprocess based on the active profile."""
     
     # 1. Profile Lookup
-    profile_name = state.get("active_profile", "coder-v2")
+    from dotenv import load_dotenv
+    load_dotenv()
+    profile_name = os.getenv("ACTIVE_PROFILE", "coder-v2")
+    if state and "active_profile" in state:
+        profile_name = state["active_profile"]
+        
     profile = load_profile(profile_name)
     
     if role not in profile["roles"]:
@@ -72,9 +80,7 @@ def run_role(role: str, prompt: str, state: AgentState, session_id: Optional[str
     tools = role_config.get("tools", [])
 
     # 2. Session Refresh Logic (Writer only)
-    if role == "writer":
-        from dotenv import load_dotenv
-        load_dotenv()
+    if role == "writer" and state is not None:
         max_turns_env = int(os.getenv("SESSION_MAX_TURNS", "20"))
         
         if state.get("session_turn_count", 0) >= max_turns_env:
@@ -83,7 +89,8 @@ def run_role(role: str, prompt: str, state: AgentState, session_id: Optional[str
             resume = False
             
     # 3. CLI Dispatch
-    _log_event(f"STEP {state.get('step_number', '?')} | {role.upper()}_CALLED | Tool: {tool}")
+    step_num = state.get('step_number', '?') if state else '?'
+    _log_event(f"STEP {step_num} | {role.upper()}_CALLED | Tool: {tool}")
     
     try:
         env = os.environ.copy()
@@ -95,7 +102,7 @@ def run_role(role: str, prompt: str, state: AgentState, session_id: Optional[str
                  cmd.extend(["-r", session_id])
             cmd.append(prompt)
             print(f"\n[Agent Runner] Dispatching {role} via {tool}...")
-            return subprocess.run(cmd, env=env, capture_output=True, text=True, check=True)
+            return subprocess.run(cmd, env=env, capture_output=True, text=True, check=False)
             
         elif tool == "claude":
             cmd = ["claude", "-p"]
@@ -115,13 +122,13 @@ def run_role(role: str, prompt: str, state: AgentState, session_id: Optional[str
                  
             cmd.append(prompt)
             print(f"\n[Agent Runner] Dispatching {role} via {tool}...")
-            return subprocess.run(cmd, env=env, capture_output=True, text=True, check=True)
+            return subprocess.run(cmd, env=env, capture_output=True, text=True, check=False)
             
         elif tool == "ollama":
              # Ollama "run" expects input on stdin for programmatic queries, or as arguments.
              cmd = ["ollama", "run", model]
              print(f"\n[Agent Runner] Dispatching {role} via {tool}...")
-             return subprocess.run(cmd, env=env, input=prompt, capture_output=True, text=True, check=True)
+             return subprocess.run(cmd, env=env, input=prompt, capture_output=True, text=True, check=False)
              
         else:
              raise ValueError(f"Unsupported tool '{tool}' configured for role '{role}'")
