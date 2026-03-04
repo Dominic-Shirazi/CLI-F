@@ -1,0 +1,26 @@
+{
+  "name": "Coder V2 (Default)",
+  "description": "Gemini builds, Ollama inspects, Claude reviews.",
+  "roles": {
+    "writer": {
+      "tool": "gemini",
+      "model": "auto",
+      "prompt_template": "standard/writer.md",
+      "flags": ["--approval-mode=yolo", "--output-format", "json"]
+    },
+    "inspector": {
+      "tool": "ollama",
+      "model": "gpt-oss:20b",
+      "prompt_template": "standard/inspector.md",
+      "tools": [],
+      "flags": []
+    },
+    "reviewer": {
+      "tool": "claude",
+      "model": "auto",
+      "prompt_template": "standard/reviewer.md",
+      "tools": ["Read", "Grep", "Glob"],
+      "flags": ["--output-format", "json"]
+    }
+  }
+}

@@ -1,0 +1,48 @@
+{
+    "name": "Power Inspector",
+    "description": "Inspector upgraded to Claude with tool access. Can run git-diff, read files, and fix typos before full audit.",
+    "roles": {
+        "writer": {
+            "tool": "gemini",
+            "model": "auto",
+            "prompt_template": "standard/writer.md",
+            "flags": [
+                "--approval-mode=yolo",
+                "--output-format",
+                "json"
+            ]
+        },
+        "inspector": {
+            "tool": "claude",
+            "model": "auto",
+            "prompt_template": "power/inspector.md",
+            "tools": [
+                "Read",
+                "Grep",
+                "Glob",
+                "Bash(git diff *)",
+                "Edit"
+            ],
+            "flags": [
+                "--output-format",
+                "json",
+                "--max-turns",
+                "5"
+            ]
+        },
+        "reviewer": {
+            "tool": "claude",
+            "model": "auto",
+            "prompt_template": "standard/reviewer.md",
+            "tools": [
+                "Read",
+                "Grep",
+                "Glob"
+            ],
+            "flags": [
+                "--output-format",
+                "json"
+            ]
+        }
+    }
+}
