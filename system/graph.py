@@ -29,7 +29,7 @@ def step_approved_node(state: AgentState) -> Dict[str, Any]:
     claude_session_id = state.get("claude_session_id")
 
     # 1. Commit Step
-    commit_step(step_num, task_name)
+    commit_step(f"Step {step_num}: {task_name}")
     
     # 2. Update AGENTS.md
     prompt = f"We just completed Step {step_num}: {task_name}. Based on your review of this step, append any new architectural or ecosystem learnings to our brain/AGENTS.md file. Only output the lines to append. If nothing new, output 'NONE'."
