@@ -42,7 +42,7 @@ def step_approved_node(state: AgentState) -> Dict[str, Any]:
     build_reporter(state)
     
     # 4. Archive Status
-    status_path = os.path.join("workspace", "STATUS_UPDATE.md")
+    status_path = os.path.join("status", "STATUS_UPDATE.md")
     archive_dir = os.path.join("status")
     os.makedirs(archive_dir, exist_ok=True)
     if os.path.exists(status_path):
