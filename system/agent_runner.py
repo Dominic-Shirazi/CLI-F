@@ -129,7 +129,19 @@ def run_role(role: str, prompt: str, session_id: Optional[str] = None, resume: b
              cmd = ["ollama", "run", model]
              print(f"\n[Agent Runner] Dispatching {role} via {tool}...")
              return subprocess.run(cmd, env=env, input=prompt, capture_output=True, text=True, check=False)
-             
+
+        elif tool == "opencode":
+            # OpenCode CLI — non-interactive mode via --print flag.
+            # Flags and model are set in the profile JSON.
+            # Default invocation: opencode run --print --model <model> "<prompt>"
+            cmd = ["opencode", "run", "--print"]
+            if model and model != "auto":
+                cmd.extend(["--model", model])
+            cmd.extend(flags)
+            cmd.append(prompt)
+            print(f"\n[Agent Runner] Dispatching {role} via {tool}...")
+            return subprocess.run(cmd, env=env, capture_output=True, text=True, check=False)
+
         else:
              raise ValueError(f"Unsupported tool '{tool}' configured for role '{role}'")
              

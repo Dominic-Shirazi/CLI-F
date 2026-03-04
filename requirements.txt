@@ -4,3 +4,4 @@ langgraph-checkpoint-sqlite
 python-dotenv
 pytest
 unittest-xml-reporting
+requests           # used by system/ceo_comms.py for Telegram Bot API

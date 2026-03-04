@@ -1,0 +1,26 @@
+{
+  "name": "OpenCode Writer",
+  "description": "OpenCode builds, Ollama inspects, Claude reviews. Swap in OpenCode as the writer CLI.",
+  "roles": {
+    "writer": {
+      "tool": "opencode",
+      "model": "anthropic/claude-sonnet-4-6",
+      "prompt_template": "standard/writer.md",
+      "flags": []
+    },
+    "inspector": {
+      "tool": "ollama",
+      "model": "gpt-oss:20b",
+      "prompt_template": "standard/inspector.md",
+      "tools": [],
+      "flags": []
+    },
+    "reviewer": {
+      "tool": "claude",
+      "model": "auto",
+      "prompt_template": "standard/reviewer.md",
+      "tools": ["Read", "Grep", "Glob"],
+      "flags": ["--output-format", "json"]
+    }
+  }
+}

@@ -19,8 +19,23 @@ except ImportError:
         pass
 
 def ceo_review_node(state: AgentState) -> Dict[str, Any]:
-    """Interrupt node for human-in-the-loop review. Execution halts before this in LangGraph."""
-    return {}
+    """
+    Executes AFTER main.py has injected ceo_instruction via app.update_state().
+    Forwards the CEO's reply to Gemini as last_error so it knows what to do next.
+    """
+    instruction = state.get("ceo_instruction") or "No instruction provided."
+    return {
+        "last_error": f"CEO instruction: {instruction}",
+        "loop_count": 0,  # reset loop guard on CEO intervention
+    }
+
+
+def route_post_ceo(state: AgentState) -> Literal["gemini_node", "end"]:
+    """After CEO node: ABORT stops the graph, anything else goes back to Gemini."""
+    instruction = (state.get("ceo_instruction") or "").strip().upper()
+    if instruction == "ABORT":
+        return "end"
+    return "gemini_node"
 
 def step_approved_node(state: AgentState) -> Dict[str, Any]:
     """Post-audit success routing: commits step, updates architecture log, archives status, preps next."""
@@ -139,7 +154,16 @@ def create_graph() -> StateGraph:
     )
     
     workflow.add_edge("step_approved", END)
-    
+
+    workflow.add_conditional_edges(
+        "ceo_review",
+        route_post_ceo,
+        {
+            "gemini_node": "gemini_node",
+            "end": END,
+        },
+    )
+
     # Memory saver for state checkpointing
     memory = MemorySaver()
     return workflow.compile(checkpointer=memory, interrupt_before=["ceo_review"])

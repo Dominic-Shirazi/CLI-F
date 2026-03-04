@@ -14,3 +14,4 @@ class AgentState(TypedDict):
     ceo_interrupt_flag: bool
     session_turn_count: int             # Incremented each time the writer CLI is called
     current_arch_layer: Optional[str]   # e.g., "backend", "frontend", "infra" — for refresh trigger
+    ceo_instruction: Optional[str]      # Reply injected by main.py after Telegram/terminal input
