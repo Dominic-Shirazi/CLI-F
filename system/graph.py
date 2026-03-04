@@ -65,21 +65,21 @@ def step_approved_node(state: AgentState) -> Dict[str, Any]:
 
 def route_post_inspector(state: AgentState) -> Literal["auditor_node", "gemini_node", "ceo_review"]:
     """Routing logic after the inspector returns a verdict."""
-    loop_count = state.get("loop_count", 0)
-    if loop_count >= 3:
-        return "ceo_review"
-        
     verdict_line = state.get("gpt_verdict", "").strip()
     
     if verdict_line.startswith("QUESTION:"):
         return "ceo_review"
         
+    if verdict_line.startswith("PASS") or verdict_line.startswith("REVIEW_REQUESTED"):
+        return "auditor_node"
+
+    loop_count = state.get("loop_count", 0)
+    if loop_count >= 3:
+        return "ceo_review"
+        
     if verdict_line.startswith("INCOMPLETE:") or verdict_line.startswith("FAIL:"):
         # Tell gemini what went wrong without changing its session (it will fix it)
         return "gemini_node"
-        
-    if verdict_line.startswith("PASS") or verdict_line.startswith("REVIEW_REQUESTED"):
-        return "auditor_node"
         
     # Fallback to CEO review if unrecognized verdict format occurs
     return "ceo_review"
