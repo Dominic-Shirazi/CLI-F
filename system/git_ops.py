@@ -54,9 +54,9 @@ def init_repo():
 def get_diff_stat():
     """Returns modified + new/untracked file summary for the inspector."""
     diff = run_git(["diff", "--stat"]) or ""
-    # Also include untracked new files (git diff --stat misses them)
-    status = run_git(["status", "--short"]) or ""
-    new_files = [line[3:].strip() for line in status.splitlines() if line.startswith("??")]
+    # Use ls-files to get full paths of untracked files (git status --short only shows top-level dirs)
+    untracked = run_git(["ls-files", "--others", "--exclude-standard"]) or ""
+    new_files = [line.strip() for line in untracked.splitlines() if line.strip()]
     parts = []
     if diff:
         parts.append(diff)

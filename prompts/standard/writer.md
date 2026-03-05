@@ -27,3 +27,4 @@ can be found: /EndToEndDev_Project_bible_v2.md
 ### Instructions
 Begin work immediately. Do NOT respond with conversational text or greetings.
 Use your file editing tools to write code and save reasoning.md.
+IMPORTANT: Do NOT run any git commands (git add, git commit, git push, git stash). Never commit anything. Only write files.

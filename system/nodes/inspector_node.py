@@ -53,7 +53,7 @@ def build_inspector_node(state: AgentState) -> Dict[str, Any]:
 
     # 3. Diff stat only (never full diff body)
     diff_stat = get_diff_stat()
-    print(f"[inspector_node] diff_stat={diff_stat[:80]}")
+    print(f"[inspector_node] diff_stat=\n{diff_stat}")
 
     # 4. Load Prompt Template and format
     try:
