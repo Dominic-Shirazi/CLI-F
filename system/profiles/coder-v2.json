@@ -6,7 +6,7 @@
       "tool": "gemini",
       "model": "auto",
       "prompt_template": "standard/writer.md",
-      "flags": ["--approval-mode=yolo", "--output-format", "json"]
+      "flags": ["--approval-mode=yolo"]
     },
     "inspector": {
       "tool": "ollama",

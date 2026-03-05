@@ -96,51 +96,69 @@ def run_role(role: str, prompt: str, session_id: Optional[str] = None, resume: b
         env = os.environ.copy()
         
         if tool == "gemini":
-            cmd = ["gemini"]
-            cmd.extend(flags)
+            prompt_file = os.path.join("workspace", f"prompt_{role}.txt")
+            os.makedirs("workspace", exist_ok=True)
+            with open(prompt_file, "w", encoding="utf-8") as f:
+                f.write(prompt)
+
+            cmd_str = "gemini"
+            if flags:
+                cmd_str += " " + " ".join(flags)
             if resume and session_id:
-                 cmd.extend(["-r", session_id])
-            cmd.append(prompt)
+                 cmd_str += f" -r {session_id}"
+            cmd_str += f" (Get-Content -Raw '{prompt_file}')"
+
             print(f"\n[Agent Runner] Dispatching {role} via {tool}...")
-            return subprocess.run(cmd, env=env, capture_output=True, text=True, check=False)
+            return subprocess.run(["powershell.exe", "-NoProfile", "-Command", cmd_str], env=env, capture_output=True, text=True, check=False)
             
         elif tool == "claude":
-            cmd = ["claude", "-p"]
+            prompt_file = os.path.join("workspace", f"prompt_{role}.txt")
+            os.makedirs("workspace", exist_ok=True)
+            with open(prompt_file, "w", encoding="utf-8") as f:
+                f.write(prompt)
+
+            cmd_str = "claude"
             if tools:
                 tools_str = ",".join(tools)
-                cmd.extend(["--allowedTools", tools_str])
-            cmd.extend(flags)
+                cmd_str += f" --allowedTools {tools_str}"
+            if flags:
+                cmd_str += " " + " ".join(flags)
             if max_turns:
-                 cmd.extend(["--max-turns", str(max_turns)])
+                 cmd_str += f" --max-turns {max_turns}"
             if schema_json:
-                 cmd.extend(["--json-schema", schema_json])
+                 # Pass inline as single-quoted string (JSON uses double quotes, safe in PS single quotes)
+                 schema_escaped = schema_json.replace("'", "''")
+                 cmd_str += f" --json-schema '{schema_escaped}'"
                  
             if resume and session_id:
-                 cmd.extend(["-r", session_id])
+                 cmd_str += f" -r {session_id}"
             elif session_id:
-                 cmd.extend(["--session-id", session_id])
+                 cmd_str += f" --session-id {session_id}"
                  
-            cmd.append(prompt)
+            cmd_str += f" -p (Get-Content -Raw '{prompt_file}')"
             print(f"\n[Agent Runner] Dispatching {role} via {tool}...")
-            return subprocess.run(cmd, env=env, capture_output=True, text=True, check=False)
+            return subprocess.run(["powershell.exe", "-NoProfile", "-Command", cmd_str], env=env, capture_output=True, text=True, check=False)
             
         elif tool == "ollama":
-             # Ollama "run" expects input on stdin for programmatic queries, or as arguments.
              cmd = ["ollama", "run", model]
              print(f"\n[Agent Runner] Dispatching {role} via {tool}...")
-             return subprocess.run(cmd, env=env, input=prompt, capture_output=True, text=True, check=False)
+             return subprocess.run(" ".join(cmd), env=env, input=prompt, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, shell=True)
 
         elif tool == "opencode":
-            # OpenCode CLI — non-interactive mode via --print flag.
-            # Flags and model are set in the profile JSON.
-            # Default invocation: opencode run --print --model <model> "<prompt>"
-            cmd = ["opencode", "run", "--print"]
+            prompt_file = os.path.join("workspace", f"prompt_{role}.txt")
+            os.makedirs("workspace", exist_ok=True)
+            with open(prompt_file, "w", encoding="utf-8") as f:
+                f.write(prompt)
+
+            cmd_str = "opencode run --print"
             if model and model != "auto":
-                cmd.extend(["--model", model])
-            cmd.extend(flags)
-            cmd.append(prompt)
+                cmd_str += f" --model {model}"
+            if flags:
+                cmd_str += " " + " ".join(flags)
+            cmd_str += f" (Get-Content -Raw '{prompt_file}')"
+            
             print(f"\n[Agent Runner] Dispatching {role} via {tool}...")
-            return subprocess.run(cmd, env=env, capture_output=True, text=True, check=False)
+            return subprocess.run(["powershell.exe", "-NoProfile", "-Command", cmd_str], env=env, capture_output=True, text=True, check=False)
 
         else:
              raise ValueError(f"Unsupported tool '{tool}' configured for role '{role}'")

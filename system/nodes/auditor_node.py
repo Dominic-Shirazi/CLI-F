@@ -72,17 +72,40 @@ def build_auditor_node(state: AgentState) -> Dict[str, Any]:
          return {"claude_audit": {"severity": "CRITICAL", "issue": f"Runner error: {str(e)}", "why_it_matters": "", "suggested_fix": ""}, "claude_session_id": claude_session_id, "ceo_interrupt_flag": True}
 
     # 6. Parse Output JSON
+    # Claude --output-format json wraps the result: {"type":"result","result":"...","session_id":"..."}
+    import re as _re
+    claude_audit = None
     try:
-         if output.startswith("```json"):
-             output = output[7:-3].strip()
-         claude_audit = json.loads(output)
-    except json.JSONDecodeError:
-         claude_audit = {
-             "severity": "CRITICAL", 
-             "issue": "Failed to parse JSON response from Reviewer.", 
-             "why_it_matters": "The auditor must return valid JSON matching the schema.", 
-             "suggested_fix": "Check the raw output string and prompt formatting."
-         }
+        if output.startswith("```json"):
+            output = output[7:-3].strip()
+        parsed_outer = json.loads(output)
+        # Unwrap Claude CLI envelope if present
+        if "result" in parsed_outer and isinstance(parsed_outer["result"], str):
+            inner = parsed_outer["result"].strip()
+            if inner.startswith("```json"):
+                inner = inner[7:-3].strip()
+            claude_audit = json.loads(inner)
+        elif "severity" in parsed_outer:
+            claude_audit = parsed_outer
+    except (json.JSONDecodeError, KeyError):
+        pass
+
+    if claude_audit is None:
+        # Fallback: regex-extract a JSON block from raw text
+        match = _re.search(r'\{[^{}]*"severity"[^{}]*\}', output, _re.DOTALL)
+        if match:
+            try:
+                claude_audit = json.loads(match.group(0))
+            except json.JSONDecodeError:
+                pass
+
+    if claude_audit is None:
+        claude_audit = {
+            "severity": "CRITICAL",
+            "issue": "Failed to parse JSON response from Reviewer.",
+            "why_it_matters": "The auditor must return valid JSON matching the schema.",
+            "suggested_fix": "Check the raw output string and prompt formatting.",
+        }
 
     # 7. Write to Audit Trail
     audit_dir = os.path.join("audit_trail")

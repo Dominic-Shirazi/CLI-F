@@ -19,10 +19,10 @@ can be found: /EndToEndDev_Project_bible_v2.md
 </static_instructions>
 
 ### Current Task
-**Step {step_number} of {total_steps}:** {current_task}
+**Step 1 of 4:** Step 2: Write tools/project_genesis/GENESIS_PROMPT.md — Part 1 (Interviewer Setup)
 
 ### Previous Error (if any)
-{last_error}
+None
 
 ### Instructions
 Begin work immediately. Do NOT respond with conversational text or greetings.

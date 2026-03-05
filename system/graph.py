@@ -42,10 +42,11 @@ def step_approved_node(state: AgentState) -> Dict[str, Any]:
     step_num = state.get("step_number", 0)
     task_name = state.get("current_task", f"Step {step_num}")
     claude_session_id = state.get("claude_session_id")
+    remaining_tasks = list(state.get("remaining_tasks") or [])
 
     # 1. Commit Step
     commit_step(f"Step {step_num}: {task_name}")
-    
+
     # 2. Update AGENTS.md
     prompt = f"We just completed Step {step_num}: {task_name}. Based on your review of this step, append any new architectural or ecosystem learnings to our brain/AGENTS.md file. Only output the lines to append. If nothing new, output 'NONE'."
     try:
@@ -55,7 +56,7 @@ def step_approved_node(state: AgentState) -> Dict[str, Any]:
 
     # 3. Reporter (Placeholder)
     build_reporter(state)
-    
+
     # 4. Archive Status
     status_path = os.path.join("status", "STATUS_UPDATE.md")
     archive_dir = os.path.join("status")
@@ -63,19 +64,35 @@ def step_approved_node(state: AgentState) -> Dict[str, Any]:
     if os.path.exists(status_path):
         shutil.copy2(status_path, os.path.join(archive_dir, f"step-{step_num}-summary.md"))
 
-    # 5. Load Next Task (Placeholder for now, assuming external loop handles pulling MASTER_PLAN.md)
-    # 7. Append Event
     _log_event("STEP_APPROVED | Task completion committed")
 
-    # 6 & 8. Reset specific state attributes for the next node
+    # 5. Advance to next task if available
+    if remaining_tasks:
+        next_task = remaining_tasks[0]
+        new_remaining = remaining_tasks[1:]
+    else:
+        next_task = "All tasks complete."
+        new_remaining = []
+
     return {
         "step_number": step_num + 1,
         "loop_count": 0,
         "session_turn_count": 0,
-        "gemini_session_id": None, # Clean writer session
-        "current_task": "Awaiting next task from MASTER_PLAN.md",
-        "last_error": None
+        "gemini_session_id": None,
+        "current_task": next_task,
+        "remaining_tasks": new_remaining,
+        "last_error": None,
     }
+
+
+def route_post_step_approved(state: AgentState) -> Literal["gemini_node", "end"]:
+    """After a step is approved: continue to next task or end if no tasks remain."""
+    remaining = state.get("remaining_tasks") or []
+    # current_task was already advanced in step_approved_node
+    current_task = state.get("current_task", "")
+    if remaining or (current_task and current_task != "All tasks complete."):
+        return "gemini_node"
+    return "end"
 
 
 def route_post_inspector(state: AgentState) -> Literal["auditor_node", "gemini_node", "ceo_review"]:
@@ -153,7 +170,14 @@ def create_graph() -> StateGraph:
         }
     )
     
-    workflow.add_edge("step_approved", END)
+    workflow.add_conditional_edges(
+        "step_approved",
+        route_post_step_approved,
+        {
+            "gemini_node": "gemini_node",
+            "end": END,
+        }
+    )
 
     workflow.add_conditional_edges(
         "ceo_review",

@@ -41,6 +41,8 @@ def load_master_plan() -> list[str]:
             stripped = line.strip()
             if stripped.startswith("- [ ]"):
                 tasks.append(stripped[5:].strip())
+            elif stripped.startswith("- []"):
+                tasks.append(stripped[4:].strip())
 
     return tasks
 
@@ -107,12 +109,14 @@ def main():
     print(f"[Main] First task: {tasks[0]}")
 
     app = create_graph()
-    config = {"configurable": {"thread_id": "main-run"}}
+    import time
+    config = {"configurable": {"thread_id": f"run-{int(time.time())}"}}
 
     initial_state: AgentState = {
         "step_number": 1,
         "total_steps": len(tasks),
         "current_task": tasks[0],
+        "remaining_tasks": tasks[1:],
         "active_profile": active_profile,
         "gemini_session_id": None,
         "claude_session_id": None,

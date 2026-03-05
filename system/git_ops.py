@@ -52,8 +52,17 @@ def init_repo():
         run_git(["commit", "-m", "System: Updated .gitignore for V2 state isolation"])
 
 def get_diff_stat():
-    """Returns 'git diff --stat' of uncommitted changes."""
-    return run_git(["diff", "--stat"]) or "No changes detected."
+    """Returns modified + new/untracked file summary for the inspector."""
+    diff = run_git(["diff", "--stat"]) or ""
+    # Also include untracked new files (git diff --stat misses them)
+    status = run_git(["status", "--short"]) or ""
+    new_files = [line[3:].strip() for line in status.splitlines() if line.startswith("??")]
+    parts = []
+    if diff:
+        parts.append(diff)
+    if new_files:
+        parts.append("New untracked files:\n" + "\n".join(f"  {f}" for f in new_files))
+    return "\n".join(parts) if parts else "No changes detected."
 
 def get_full_diff():
     """Returns 'git diff' of uncommitted changes."""

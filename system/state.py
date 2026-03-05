@@ -1,9 +1,10 @@
-from typing import TypedDict, Optional
+from typing import TypedDict, Optional, List
 
 class AgentState(TypedDict):
     step_number: int
     total_steps: int
     current_task: str
+    remaining_tasks: List[str]
     active_profile: str                  # Name of the active profile (e.g., "coder-v2")
     gemini_session_id: Optional[str]    # "latest" after first call, or None on fresh step
     claude_session_id: Optional[str]    # UUID generated once at run start, kept across steps

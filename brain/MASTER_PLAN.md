@@ -77,7 +77,7 @@ understand what each generated file must look like:
 
 ## Build Steps
 
-- [ ] Step 1: Complete Master_Plan_requirements.md
+- [x] Step 1: Complete Master_Plan_requirements.md
   Write the full question list to Master_Plan_requirements.md (in the repo root).
   Organize into 9 topic groups. Each group needs a heading and 3-6 specific questions
   that a web AI would ask a developer about a new project. Questions must be concrete
