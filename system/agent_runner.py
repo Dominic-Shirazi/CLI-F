@@ -1,8 +1,52 @@
 import json
 import os
 import subprocess
+import threading
+import time
+from datetime import datetime
 from typing import Optional, Dict, Any
 from .state import AgentState
+
+def _ts() -> str:
+    return datetime.now().strftime("%H:%M:%S")
+
+def _run_streaming(cmd, label: str, input_text: str = None, encoding: str = "utf-8", shell: bool = False, env=None) -> subprocess.CompletedProcess:
+    """Run a subprocess and stream stdout to terminal live while capturing it."""
+    kwargs = dict(stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, shell=shell)
+    if input_text is not None:
+        kwargs["stdin"] = subprocess.PIPE
+
+    proc = subprocess.Popen(cmd, **kwargs)
+    stdout_chunks: list[bytes] = []
+    stderr_chunks: list[bytes] = []
+
+    def read_stdout():
+        for raw in proc.stdout:
+            stdout_chunks.append(raw)
+            try:
+                line = raw.decode(encoding, errors="replace").rstrip("\n")
+            except Exception:
+                line = repr(raw)
+            print(f"  \033[2m{label}>\033[0m {line}", flush=True)
+
+    def read_stderr():
+        for raw in proc.stderr:
+            stderr_chunks.append(raw)
+
+    t1 = threading.Thread(target=read_stdout, daemon=True)
+    t2 = threading.Thread(target=read_stderr, daemon=True)
+    t1.start(); t2.start()
+
+    if input_text is not None:
+        proc.stdin.write(input_text.encode(encoding, errors="replace"))
+        proc.stdin.close()
+
+    t1.join(); t2.join()
+    proc.wait()
+
+    stdout = b"".join(stdout_chunks).decode(encoding, errors="replace")
+    stderr = b"".join(stderr_chunks).decode(encoding, errors="replace")
+    return subprocess.CompletedProcess(cmd, proc.returncode, stdout=stdout, stderr=stderr)
 
 def load_profile(profile_name: str) -> dict:
     """Reads system/profiles/{profile_name}.json and returns the parsed dict."""
@@ -90,11 +134,17 @@ def run_role(role: str, prompt: str, session_id: Optional[str] = None, resume: b
             
     # 3. CLI Dispatch
     step_num = state.get('step_number', '?') if state else '?'
+    total = state.get('total_steps', '?') if state else '?'
     _log_event(f"STEP {step_num} | {role.upper()}_CALLED | Tool: {tool}")
-    
+    print(f"\n{'='*55}", flush=True)
+    print(f"  STEP {step_num}/{total} — {role.upper()}  [{tool}]  {_ts()}", flush=True)
+    print(f"{'='*55}", flush=True)
+
     try:
         env = os.environ.copy()
-        
+        env.pop("CLAUDECODE", None)   # Allow claude CLI to run outside a Claude Code session
+        env.pop("CLAUDE_CODE_ENTRYPOINT", None)
+
         if tool == "gemini":
             prompt_file = os.path.join("workspace", f"prompt_{role}.txt")
             os.makedirs("workspace", exist_ok=True)
@@ -108,9 +158,12 @@ def run_role(role: str, prompt: str, session_id: Optional[str] = None, resume: b
                  cmd_str += f" -r {session_id}"
             cmd_str += f" (Get-Content -Raw '{prompt_file}')"
 
-            print(f"\n[Agent Runner] Dispatching {role} via {tool}...")
-            return subprocess.run(["powershell.exe", "-NoProfile", "-Command", cmd_str], env=env, capture_output=True, text=True, check=False)
-            
+            print(f"  [{_ts()}] Gemini working... (streaming output below)", flush=True)
+            t0 = time.time()
+            result = _run_streaming(["powershell.exe", "-NoProfile", "-Command", cmd_str], label="Gemini", env=env)
+            print(f"\n  [{_ts()}] Gemini done ({time.time()-t0:.1f}s)", flush=True)
+            return result
+
         elif tool == "claude":
             prompt_file = os.path.join("workspace", f"prompt_{role}.txt")
             os.makedirs("workspace", exist_ok=True)
@@ -124,25 +177,26 @@ def run_role(role: str, prompt: str, session_id: Optional[str] = None, resume: b
             if flags:
                 cmd_str += " " + " ".join(flags)
             if max_turns:
-                 cmd_str += f" --max-turns {max_turns}"
-            if schema_json:
-                 # Pass inline as single-quoted string (JSON uses double quotes, safe in PS single quotes)
-                 schema_escaped = schema_json.replace("'", "''")
-                 cmd_str += f" --json-schema '{schema_escaped}'"
-                 
+                cmd_str += f" --max-turns {max_turns}"
             if resume and session_id:
-                 cmd_str += f" -r {session_id}"
-            elif session_id:
-                 cmd_str += f" --session-id {session_id}"
-                 
-            cmd_str += f" -p (Get-Content -Raw '{prompt_file}')"
-            print(f"\n[Agent Runner] Dispatching {role} via {tool}...")
-            return subprocess.run(["powershell.exe", "-NoProfile", "-Command", cmd_str], env=env, capture_output=True, text=True, check=False)
-            
+                cmd_str += f" -r {session_id}"
+
+            # Pipe prompt via stdin to avoid Windows 32KB command-line length limit.
+            # PowerShell: Get-Content pipes file → claude reads it from stdin via -p -
+            ps_cmd = f"Get-Content -Raw '{prompt_file}' | {cmd_str} -p -"
+            print(f"  [{_ts()}] Claude working... (streaming output below)", flush=True)
+            t0 = time.time()
+            result = _run_streaming(["powershell.exe", "-NoProfile", "-Command", ps_cmd], label="Claude", env=env)
+            print(f"\n  [{_ts()}] Claude done ({time.time()-t0:.1f}s)", flush=True)
+            return result
+
         elif tool == "ollama":
-             cmd = ["ollama", "run", model]
-             print(f"\n[Agent Runner] Dispatching {role} via {tool}...")
-             return subprocess.run(" ".join(cmd), env=env, input=prompt, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, shell=True)
+            cmd = " ".join(["ollama", "run", model])
+            print(f"  [{_ts()}] Ollama working... (streaming output below)", flush=True)
+            t0 = time.time()
+            result = _run_streaming(cmd, label="Ollama", input_text=prompt, encoding="utf-8", shell=True, env=env)
+            print(f"\n  [{_ts()}] Ollama done ({time.time()-t0:.1f}s)", flush=True)
+            return result
 
         elif tool == "opencode":
             prompt_file = os.path.join("workspace", f"prompt_{role}.txt")

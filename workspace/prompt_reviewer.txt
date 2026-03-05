@@ -1,0 +1,662 @@
+<static_instructions cache="true">
+You are Claude, the Auditor node in the EndToEndDev autonomous loop.
+Your job is to audit the provided diff for logic errors, security vulnerabilities, and scalability issues.
+
+Project Bible can be found: EndToEndDev_Project_bible_v2.md
+Current step-by-step plan can be found: brain/MASTER_PLAN.md (Gemini is following this plan)
+</static_instructions>
+
+Step 1: Step 2: Write tools/project_genesis/GENESIS_PROMPT.md — Part 1 (Interviewer Setup)
+
+Gemini's reasoning: ### Reasoning — Step 2
+**What I was asked to do:** Write tools/project_genesis/GENESIS_PROMPT.md — Part 1 (Interviewer Setup)
+**What I actually did:** Wrote `tools/project_genesis/GENESIS_PROMPT.md` with the first half of the prompt, including the system context (what EndToEndDev is and the files it needs), the "Project Architect" interviewer persona instructions (ask one group at a time, be conversational, confirm before moving on), and embedded the canonical list of questions from `Master_Plan_requirements.md` organized into 9 topic groups. I ensured the output generation instructions were left for Part 2.
+**Tests Performed:** `(Get-Content tools/project_genesis/GENESIS_PROMPT.md | Measure-Object -Word).Words`
+**Test Results:** PASS. Word count is 1092, which satisfies the 600-1200 words requirement perfectly.
+**Did I complete the full task?** YES
+**Any questions before I continue?** NONE
+
+Full diff:
+diff --git a/audit_trail/claude_audit_notes.md b/audit_trail/claude_audit_notes.md
+index 591cef3..14c1adc 100644
+--- a/audit_trail/claude_audit_notes.md
++++ b/audit_trail/claude_audit_notes.md
+@@ -1,9 +1,9 @@
+-# Claude Audit Log (Session: 6d3c6c64-27e8-49c5-8e7d-d94168f95450)
++# Claude Audit Log (Session: 74e918da-ce9b-4547-af49-951a25c70e4a)
+ 
+ **Severity:** CRITICAL
+ 
+-**Issue:** Big Bug
++**Issue:** Failed to parse JSON response from Reviewer.
+ 
+-**Why it Matters:** 
++**Why it Matters:** The auditor must return valid JSON matching the schema.
+ 
+-**Suggested Fix:** 
++**Suggested Fix:** Check the raw output string and prompt formatting.
+diff --git a/main.py b/main.py
+index 9528dce..318d7ad 100644
+--- a/main.py
++++ b/main.py
+@@ -86,7 +86,11 @@ def format_ceo_alert(state: dict) -> str:
+ 
+     lines += [
+         f"",
+-        f"Reply with instructions, or send `ABORT` to stop the run.",
++        f"Commands:",
++        f"  PASS              â†’ send to Claude auditor as-is",
++        f"  PASS: <note>      â†’ send to Claude auditor with your note",
++        f"  REJECT: <reason>  â†’ send back to Gemini with your feedback",
++        f"  ABORT             â†’ stop the run",
+     ]
+     return "\n".join(lines)
+ 
+@@ -128,6 +132,7 @@ def main():
+         "session_turn_count": 0,
+         "current_arch_layer": None,
+         "ceo_instruction": None,
++        "ceo_route": None,
+     }
+ 
+     # `input_state` is the initial state on first call, None on resume.
+@@ -138,7 +143,15 @@ def main():
+ 
+         for event in app.stream(input_state, config, stream_mode="updates"):
+             node_name = list(event.keys())[0] if event else "unknown"
+-            print(f"  â†³ [{node_name}] done")
++            vals = list(event.values())[0] if event else {}
++            if node_name == "step_approved":
++                print(f"\n  âœ“ STEP APPROVED â€” committed. Advancing to next task.")
++            elif node_name == "ceo_review":
++                pass  # handled below with CEO alert
++            else:
++                err = vals.get("last_error") if isinstance(vals, dict) else None
++                suffix = f" â€” error: {err}" if err else ""
++                print(f"  â†³ [{node_name}]{suffix}")
+ 
+         # After stream exhausts, check if we're paused at an interrupt
+         snapshot = app.get_state(config)
+diff --git a/system/agent_runner.py b/system/agent_runner.py
+index b83caa3..13b4bac 100644
+--- a/system/agent_runner.py
++++ b/system/agent_runner.py
+@@ -1,9 +1,53 @@
+ import json
+ import os
+ import subprocess
++import threading
++import time
++from datetime import datetime
+ from typing import Optional, Dict, Any
+ from .state import AgentState
+ 
++def _ts() -> str:
++    return datetime.now().strftime("%H:%M:%S")
++
++def _run_streaming(cmd, label: str, input_text: str = None, encoding: str = "utf-8", shell: bool = False, env=None) -> subprocess.CompletedProcess:
++    """Run a subprocess and stream stdout to terminal live while capturing it."""
++    kwargs = dict(stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, shell=shell)
++    if input_text is not None:
++        kwargs["stdin"] = subprocess.PIPE
++
++    proc = subprocess.Popen(cmd, **kwargs)
++    stdout_chunks: list[bytes] = []
++    stderr_chunks: list[bytes] = []
++
++    def read_stdout():
++        for raw in proc.stdout:
++            stdout_chunks.append(raw)
++            try:
++                line = raw.decode(encoding, errors="replace").rstrip("\n")
++            except Exception:
++                line = repr(raw)
++            print(f"  \033[2m{label}>\033[0m {line}", flush=True)
++
++    def read_stderr():
++        for raw in proc.stderr:
++            stderr_chunks.append(raw)
++
++    t1 = threading.Thread(target=read_stdout, daemon=True)
++    t2 = threading.Thread(target=read_stderr, daemon=True)
++    t1.start(); t2.start()
++
++    if input_text is not None:
++        proc.stdin.write(input_text.encode(encoding, errors="replace"))
++        proc.stdin.close()
++
++    t1.join(); t2.join()
++    proc.wait()
++
++    stdout = b"".join(stdout_chunks).decode(encoding, errors="replace")
++    stderr = b"".join(stderr_chunks).decode(encoding, errors="replace")
++    return subprocess.CompletedProcess(cmd, proc.returncode, stdout=stdout, stderr=stderr)
++
+ def load_profile(profile_name: str) -> dict:
+     """Reads system/profiles/{profile_name}.json and returns the parsed dict."""
+     profile_path = os.path.join("system", "profiles", f"{profile_name}.json")
+@@ -90,11 +134,17 @@ def run_role(role: str, prompt: str, session_id: Optional[str] = None, resume: b
+             
+     # 3. CLI Dispatch
+     step_num = state.get('step_number', '?') if state else '?'
++    total = state.get('total_steps', '?') if state else '?'
+     _log_event(f"STEP {step_num} | {role.upper()}_CALLED | Tool: {tool}")
+-    
++    print(f"\n{'='*55}", flush=True)
++    print(f"  STEP {step_num}/{total} â€” {role.upper()}  [{tool}]  {_ts()}", flush=True)
++    print(f"{'='*55}", flush=True)
++
+     try:
+         env = os.environ.copy()
+-        
++        env.pop("CLAUDECODE", None)   # Allow claude CLI to run outside a Claude Code session
++        env.pop("CLAUDE_CODE_ENTRYPOINT", None)
++
+         if tool == "gemini":
+             prompt_file = os.path.join("workspace", f"prompt_{role}.txt")
+             os.makedirs("workspace", exist_ok=True)
+@@ -108,9 +158,12 @@ def run_role(role: str, prompt: str, session_id: Optional[str] = None, resume: b
+                  cmd_str += f" -r {session_id}"
+             cmd_str += f" (Get-Content -Raw '{prompt_file}')"
+ 
+-            print(f"\n[Agent Runner] Dispatching {role} via {tool}...")
+-            return subprocess.run(["powershell.exe", "-NoProfile", "-Command", cmd_str], env=env, capture_output=True, text=True, check=False)
+-            
++            print(f"  [{_ts()}] Gemini working... (streaming output below)", flush=True)
++            t0 = time.time()
++            result = _run_streaming(["powershell.exe", "-NoProfile", "-Command", cmd_str], label="Gemini", env=env)
++            print(f"\n  [{_ts()}] Gemini done ({time.time()-t0:.1f}s)", flush=True)
++            return result
++
+         elif tool == "claude":
+             prompt_file = os.path.join("workspace", f"prompt_{role}.txt")
+             os.makedirs("workspace", exist_ok=True)
+@@ -124,25 +177,24 @@ def run_role(role: str, prompt: str, session_id: Optional[str] = None, resume: b
+             if flags:
+                 cmd_str += " " + " ".join(flags)
+             if max_turns:
+-                 cmd_str += f" --max-turns {max_turns}"
+-            if schema_json:
+-                 # Pass inline as single-quoted string (JSON uses double quotes, safe in PS single quotes)
+-                 schema_escaped = schema_json.replace("'", "''")
+-                 cmd_str += f" --json-schema '{schema_escaped}'"
+-                 
++                cmd_str += f" --max-turns {max_turns}"
+             if resume and session_id:
+-                 cmd_str += f" -r {session_id}"
+-            elif session_id:
+-                 cmd_str += f" --session-id {session_id}"
+-                 
++                cmd_str += f" -r {session_id}"
++
+             cmd_str += f" -p (Get-Content -Raw '{prompt_file}')"
+-            print(f"\n[Agent Runner] Dispatching {role} via {tool}...")
+-            return subprocess.run(["powershell.exe", "-NoProfile", "-Command", cmd_str], env=env, capture_output=True, text=True, check=False)
+-            
++            print(f"  [{_ts()}] Claude working... (streaming output below)", flush=True)
++            t0 = time.time()
++            result = _run_streaming(["powershell.exe", "-NoProfile", "-Command", cmd_str], label="Claude", env=env)
++            print(f"\n  [{_ts()}] Claude done ({time.time()-t0:.1f}s)", flush=True)
++            return result
++
+         elif tool == "ollama":
+-             cmd = ["ollama", "run", model]
+-             print(f"\n[Agent Runner] Dispatching {role} via {tool}...")
+-             return subprocess.run(" ".join(cmd), env=env, input=prompt, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, shell=True)
++            cmd = " ".join(["ollama", "run", model])
++            print(f"  [{_ts()}] Ollama working... (streaming output below)", flush=True)
++            t0 = time.time()
++            result = _run_streaming(cmd, label="Ollama", input_text=prompt, encoding="utf-8", shell=True, env=env)
++            print(f"\n  [{_ts()}] Ollama done ({time.time()-t0:.1f}s)", flush=True)
++            return result
+ 
+         elif tool == "opencode":
+             prompt_file = os.path.join("workspace", f"prompt_{role}.txt")
+diff --git a/system/graph.py b/system/graph.py
+index 152ff43..8decf53 100644
+--- a/system/graph.py
++++ b/system/graph.py
+@@ -21,20 +21,41 @@ except ImportError:
+ def ceo_review_node(state: AgentState) -> Dict[str, Any]:
+     """
+     Executes AFTER main.py has injected ceo_instruction via app.update_state().
+-    Forwards the CEO's reply to Gemini as last_error so it knows what to do next.
++    Parses PASS / REJECT / free-text and sets ceo_route accordingly.
+     """
+-    instruction = state.get("ceo_instruction") or "No instruction provided."
+-    return {
+-        "last_error": f"CEO instruction: {instruction}",
+-        "loop_count": 0,  # reset loop guard on CEO intervention
+-    }
++    instruction = (state.get("ceo_instruction") or "").strip()
++    upper = instruction.upper()
++
++    if upper.startswith("PASS"):
++        note = instruction[4:].lstrip(": ").strip()
++        return {
++            "ceo_route": "pass",
++            "last_error": f"CEO note for auditor: {note}" if note else None,
++            "loop_count": 0,
++        }
++    elif upper.startswith("REJECT"):
++        note = instruction[6:].lstrip(": ").strip()
++        return {
++            "ceo_route": "reject",
++            "last_error": f"CEO feedback: {note}" if note else "CEO rejected â€” fix the issues and try again.",
++            "loop_count": 0,
++        }
++    else:
++        # Free-text treated as a Gemini instruction (old behaviour)
++        return {
++            "ceo_route": "reject",
++            "last_error": f"CEO instruction: {instruction}",
++            "loop_count": 0,
++        }
+ 
+ 
+-def route_post_ceo(state: AgentState) -> Literal["gemini_node", "end"]:
+-    """After CEO node: ABORT stops the graph, anything else goes back to Gemini."""
++def route_post_ceo(state: AgentState) -> Literal["auditor_node", "gemini_node", "end"]:
++    """Route after CEO node: PASSâ†’auditor, REJECT/otherâ†’Gemini, ABORT already handled in main."""
+     instruction = (state.get("ceo_instruction") or "").strip().upper()
+     if instruction == "ABORT":
+         return "end"
++    if state.get("ceo_route") == "pass":
++        return "auditor_node"
+     return "gemini_node"
+ 
+ def step_approved_node(state: AgentState) -> Dict[str, Any]:
+@@ -183,6 +204,7 @@ def create_graph() -> StateGraph:
+         "ceo_review",
+         route_post_ceo,
+         {
++            "auditor_node": "auditor_node",
+             "gemini_node": "gemini_node",
+             "end": END,
+         },
+diff --git a/system/nodes/auditor_node.py b/system/nodes/auditor_node.py
+index c771bfc..04c4507 100644
+--- a/system/nodes/auditor_node.py
++++ b/system/nodes/auditor_node.py
+@@ -1,127 +1,119 @@
+ import os
+ import json
+-import uuid
++import re
+ from typing import Dict, Any
+ from system.state import AgentState
+ from system.agent_runner import run_role, get_prompt_template
+ from system.git_ops import get_full_diff
+ 
+ def build_auditor_node(state: AgentState) -> Dict[str, Any]:
+-    """Builds the Reviewer brief, generates a session UUID, and calls Claude."""
+-    
++    """Calls Claude to audit the diff. Claude reads CLAUDE.md and outputs JSON directly."""
++
+     current_task = state.get("current_task", "Unknown Task")
+     step_number = state.get("step_number", 0)
+-    claude_session_id = state.get("claude_session_id")
+-
+-    # 1. Session ID Management
+-    if not claude_session_id:
+-        claude_session_id = str(uuid.uuid4())
+-        resume = False
+-        max_turns = 10
+-    else:
+-        resume = True
+-        max_turns = 5
+ 
+-    # 2. Gather Context
++    # 1. Gather Context
+     reasoning_path = os.path.join("workspace", "gemini_output", "reasoning.md")
+     reasoning_summary = ""
+     if os.path.exists(reasoning_path):
+-         with open(reasoning_path, "r", encoding="utf-8") as f:
+-             reasoning_summary = f.read()
+-             
++        with open(reasoning_path, "r", encoding="utf-8") as f:
++            reasoning_summary = f.read()
++
+     full_diff = get_full_diff()
+ 
+-    # 3. Load Template
++    # 2. Load Template
+     try:
+         template = get_prompt_template("reviewer")
+         prompt = template.format(
+             step_number=step_number,
+             current_task=current_task,
+             reasoning_summary=reasoning_summary,
+-            full_diff=full_diff
++            full_diff=full_diff,
+         )
+     except Exception as e:
+-        return {"claude_audit": {"severity": "CRITICAL", "issue": f"Template format error: {str(e)}", "why_it_matters": "", "suggested_fix": ""}, "claude_session_id": claude_session_id, "ceo_interrupt_flag": True}
+-
+-    # 4. JSON Schema Definition
+-    schema = {
+-        "type": "object",
+-        "required": ["severity", "issue", "why_it_matters", "suggested_fix"],
+-        "properties": {
+-            "severity": { "enum": ["CRITICAL", "MAJOR", "MINOR", "NONE"] },
+-            "issue": { "type": "string" },
+-            "why_it_matters": { "type": "string" },
+-            "suggested_fix": { "type": "string" }
++        return {
++            "claude_audit": {"severity": "CRITICAL", "issue": f"Template format error: {str(e)}", "why_it_matters": "", "suggested_fix": ""},
++            "ceo_interrupt_flag": True,
+         }
+-    }
+-    schema_json = json.dumps(schema)
+ 
+-    # 5. Call Agent Runner
++    # 3. Call Claude (no --json-schema / --session-id â€” CLAUDE.md enforces JSON output)
+     try:
+-        result = run_role(
+-             role="reviewer", 
+-             prompt=prompt, 
+-             session_id=claude_session_id, 
+-             resume=resume,
+-             schema_json=schema_json,
+-             max_turns=max_turns,
+-             state=state
+-        )
++        result = run_role(role="reviewer", prompt=prompt, max_turns=10, state=state)
+         output = result.stdout.strip()
++        print(f"\n[auditor_node] Claude returncode={result.returncode}")
++        if result.returncode != 0:
++            print(f"[auditor_node] stderr: {result.stderr[:300]}")
+     except Exception as e:
+-         return {"claude_audit": {"severity": "CRITICAL", "issue": f"Runner error: {str(e)}", "why_it_matters": "", "suggested_fix": ""}, "claude_session_id": claude_session_id, "ceo_interrupt_flag": True}
++        return {
++            "claude_audit": {"severity": "CRITICAL", "issue": f"Runner error: {str(e)}", "why_it_matters": "", "suggested_fix": ""},
++            "ceo_interrupt_flag": True,
++        }
+ 
+-    # 6. Parse Output JSON
+-    # Claude --output-format json wraps the result: {"type":"result","result":"...","session_id":"..."}
+-    import re as _re
++    # 4. Parse JSON from Claude's output
++    # CLAUDE.md tells Claude to output raw JSON. Try multiple strategies:
+     claude_audit = None
++
++    # Strategy A: strip code fence if present, then parse directly
++    clean = output
++    if "```json" in clean:
++        m = re.search(r'```json\s*(.*?)\s*```', clean, re.DOTALL)
++        if m:
++            clean = m.group(1).strip()
++    elif "```" in clean:
++        m = re.search(r'```\s*(.*?)\s*```', clean, re.DOTALL)
++        if m:
++            clean = m.group(1).strip()
++
+     try:
+-        if output.startswith("```json"):
+-            output = output[7:-3].strip()
+-        parsed_outer = json.loads(output)
+-        # Unwrap Claude CLI envelope if present
+-        if "result" in parsed_outer and isinstance(parsed_outer["result"], str):
+-            inner = parsed_outer["result"].strip()
+-            if inner.startswith("```json"):
+-                inner = inner[7:-3].strip()
+-            claude_audit = json.loads(inner)
+-        elif "severity" in parsed_outer:
+-            claude_audit = parsed_outer
+-    except (json.JSONDecodeError, KeyError):
++        claude_audit = json.loads(clean)
++    except json.JSONDecodeError:
+         pass
+ 
++    # Strategy B: Claude CLI --output-format json envelope {"type":"result","result":"..."}
+     if claude_audit is None:
+-        # Fallback: regex-extract a JSON block from raw text
+-        match = _re.search(r'\{[^{}]*"severity"[^{}]*\}', output, _re.DOTALL)
+-        if match:
++        try:
++            outer = json.loads(output)
++            if "result" in outer and isinstance(outer["result"], str):
++                inner = outer["result"].strip()
++                if inner.startswith("```json"):
++                    inner = inner[7:inner.rfind("```")].strip()
++                claude_audit = json.loads(inner)
++            elif "severity" in outer:
++                claude_audit = outer
++        except (json.JSONDecodeError, KeyError):
++            pass
++
++    # Strategy C: regex â€” find first {...} block containing "severity"
++    if claude_audit is None:
++        m = re.search(r'\{[^{}]*"severity"[^{}]*\}', output, re.DOTALL)
++        if m:
+             try:
+-                claude_audit = json.loads(match.group(0))
++                claude_audit = json.loads(m.group(0))
+             except json.JSONDecodeError:
+                 pass
+ 
+     if claude_audit is None:
++        print(f"[auditor_node] RAW OUTPUT (parse failed):\n{output[:800]}")
+         claude_audit = {
+             "severity": "CRITICAL",
+-            "issue": "Failed to parse JSON response from Reviewer.",
+-            "why_it_matters": "The auditor must return valid JSON matching the schema.",
+-            "suggested_fix": "Check the raw output string and prompt formatting.",
++            "issue": "Failed to parse JSON from Claude's response.",
++            "why_it_matters": "Auditor output is unparseable.",
++            "suggested_fix": "Check raw output above.",
+         }
+ 
+-    # 7. Write to Audit Trail
++    # 5. Write Audit Trail
+     audit_dir = os.path.join("audit_trail")
+     os.makedirs(audit_dir, exist_ok=True)
+     with open(os.path.join(audit_dir, "claude_audit_notes.md"), "w", encoding="utf-8") as f:
+-         f.write(f"# Claude Audit Log (Session: {claude_session_id})\n\n")
+-         f.write(f"**Severity:** {claude_audit.get('severity')}\n\n")
+-         f.write(f"**Issue:** {claude_audit.get('issue')}\n\n")
+-         f.write(f"**Why it Matters:** {claude_audit.get('why_it_matters')}\n\n")
+-         f.write(f"**Suggested Fix:** {claude_audit.get('suggested_fix')}\n")
++        f.write(f"# Claude Audit â€” Step {step_number}\n\n")
++        f.write(f"**Severity:** {claude_audit.get('severity')}\n\n")
++        f.write(f"**Issue:** {claude_audit.get('issue')}\n\n")
++        f.write(f"**Why it Matters:** {claude_audit.get('why_it_matters')}\n\n")
++        f.write(f"**Suggested Fix:** {claude_audit.get('suggested_fix')}\n")
++
++    ceo_interrupt_flag = claude_audit.get("severity") in ("CRITICAL", "MAJOR")
+ 
+-    # 8. Set CEO Interrupt Flag
+-    ceo_interrupt_flag = (claude_audit.get("severity") == "CRITICAL")
+-    
+     return {
+-        "claude_audit": claude_audit, 
+-        "claude_session_id": claude_session_id, 
+-        "ceo_interrupt_flag": ceo_interrupt_flag
++        "claude_audit": claude_audit,
++        "ceo_interrupt_flag": ceo_interrupt_flag,
+     }
+diff --git a/system/profiles/coder-v2.json b/system/profiles/coder-v2.json
+index 60bf5e5..96fdd35 100644
+--- a/system/profiles/coder-v2.json
++++ b/system/profiles/coder-v2.json
+@@ -20,7 +20,7 @@
+       "model": "auto",
+       "prompt_template": "standard/reviewer.md",
+       "tools": ["Read", "Grep", "Glob"],
+-      "flags": ["--output-format", "json"]
++      "flags": []
+     }
+   }
+ }
+diff --git a/system/state.py b/system/state.py
+index 57f6642..0485550 100644
+--- a/system/state.py
++++ b/system/state.py
+@@ -16,3 +16,4 @@ class AgentState(TypedDict):
+     session_turn_count: int             # Incremented each time the writer CLI is called
+     current_arch_layer: Optional[str]   # e.g., "backend", "frontend", "infra" â€” for refresh trigger
+     ceo_instruction: Optional[str]      # Reply injected by main.py after Telegram/terminal input
++    ceo_route: Optional[str]            # "pass" | "reject" â€” set by ceo_review_node, read by router
+diff --git a/tools/project_genesis/GENESIS_PROMPT.md b/tools/project_genesis/GENESIS_PROMPT.md
+index 1c50079..9b4248e 100644
+--- a/tools/project_genesis/GENESIS_PROMPT.md
++++ b/tools/project_genesis/GENESIS_PROMPT.md
+@@ -1,103 +1,100 @@
+-# PROJECT GENESIS: The EndToEndDev Architect Prompt
++# Project Genesis: The EndToEndDev Architect
+ 
+-You are the **Project Architect**, a specialized AI agent designed to bootstrap new software projects for the **EndToEndDev** framework. Your mission is to interview the developer (who acts as the "CEO"), extract their vision, and prepare to transform it into a perfectly formatted set of configuration files that the EndToEndDev agents can use to build the project autonomously.
++## System Context: What is EndToEndDev?
+ 
+----
++EndToEndDev is an autonomous, agent-driven development framework designed to take a software project from initial concept to completion with minimal human intervention. It operates through a highly structured loop involving three specialized AI agents:
++
++1.  **The Builder (Gemini):** Responsible for reading tasks, writing code, implementing features, and running tests.
++2.  **The Inspector (GPT-OSS):** Acts as the first line of defense, verifying that the Builder's work matches the project's goals, standards, and specific task requirements before passing it to the final review.
++3.  **The Auditor (Claude):** Provides a final, rigorous review of the code and architecture, ensuring high quality, security, and stability before any change is officially committed to the repository.
++
++To function effectively, EndToEndDev requires a specific set of configuration files that define the project's identity, technical constraints, and step-by-step roadmap. These files act as the "brain" of the project; without them, the agents have no direction.
++
++### Why These Files Matter
+ 
+-## 1. WHAT IS ENDTOENDDEV?
++The following files are essential for an EndToEndDev project to function correctly:
+ 
+-EndToEndDev is a "Vibe-First" autonomous development loop. It uses a network of AI agents to build software step-by-step:
+-1. **Gemini (The Builder):** Writes the code and runs tests directly in the project workspace.
+-2. **Claude (The Auditor):** Reviews all code changes for quality, security, and architectural integrity.
+-3. **GPT-OSS (The Inspector):** Acts as a quality gate, ensuring each step matches the Master Plan and meets success criteria.
+-4. **Python Orchestrator:** Manages git operations, session persistence, and agent handoffs.
++*   **`brain/MASTER_PLAN.md`**: The definitive roadmap. It outlines the project's vision, architecture, and every single development step required to reach the MVP (Minimum Viable Product).
++*   **`brain/SUCCESS_CRITERIA.md`**: The "Done-Done" checklist. For every step in the Master Plan, this file defines exactly what must be true for the step to be considered fully complete.
++*   **`brain/ENVIRONMENT_RULES.md`**: The technical guardrails. It specifies the language, frameworks, coding standards, and testing requirements the agents must follow.
++*   **`GEMINI.md` & `CLAUDE.md`**: Agent-specific rulebooks. These files tell the Builder and Auditor exactly how to behave, what tools they can use, and what their specific responsibilities are.
++*   **`system/profiles/project-default.json`**: The agent configuration profile, defining which models and settings to use for each role.
++*   **`prompts/standard/writer.md`, `inspector.md`, `reviewer.md`**: The core prompt templates that drive the AI agents' behavior during the development loop.
+ 
+-For this system to work without human intervention, it requires a "Brain" consisting of specific Markdown files that define the project's soul, rules, and success criteria. These files include the Master Plan, Success Criteria, Environment Rules, and specific AI agent prompts (`GEMINI.md`, `CLAUDE.md`). Your primary goal during this interview is to gather enough detailed context so you can accurately generate these files later.
++The **Project Genesis** tool bridges the gap between a developer's idea and these complex configuration files. By conducting this interview, you are gathering the raw material needed to manufacture a perfectly tuned EndToEndDev "brain."
+ 
+ ---
+ 
+-## 2. YOUR ROLE AS PROJECT ARCHITECT
++## Your Persona: The Project Architect
+ 
+-Your job is to conduct a structured, conversational interview to gather the requirements for these crucial project files. 
++You are the **Project Architect**, a seasoned software engineer and systems designer with years of experience architecting scalable applications. Your mission is to interview the developer (the user) and extract every detail necessary to generate a complete, EndToEndDev-ready project structure.
+ 
+-### Guidelines for the Interview:
+-- **Be Conversational:** Do not just dump a list of questions all at once. Introduce yourself, explain the process, and engage meaningfully with the user's project idea. Act like an experienced technical co-founder.
+-- **One Topic at a Time:** Ask questions from one topic group at a time. Wait for the user's response and confirm you understand before moving to the next group. You may combine groups if the user provides extensive information, but do not overwhelm them.
+-- **Be Specific:** If the user gives a vague or brief answer, ask targeted follow-up questions to get concrete, actionable details. We need enough detail to write a literal "Master Plan" that another AI can execute blindly.
+-- **Stay Focused:** Keep the conversation on track towards defining the MVP (Minimum Viable Product). Gently steer the user away from overly complex version 2.0 features for now.
+-- **The Ultimate Goal:** You are gathering context. Once all 9 topic groups are covered, you will be instructed in a later step to generate the project files based on this conversation.
++### Interview Rules
++
++1.  **One Step at a Time:** Do not overwhelm the developer. Ask questions from only one topic group at a time. Wait for their response before moving to the next group.
++2.  **Be Conversational:** Don't just list questions like a robot. Respond to the developer's answers, ask follow-up questions if something is unclear, and maintain an encouraging, professional tone. 
++3.  **Confirm and Clarify:** Before moving to a new topic group, briefly summarize your understanding of the previous answers to ensure you have the full picture and haven't misunderstood anything.
++4.  **The Goal is "GENERATE":** Your ultimate goal is to reach a state where you have enough information to generate all 10 required files. Once the interview is complete, tell the developer you are ready and ask them to type "GENERATE" to begin the file creation process.
+ 
+ ---
+ 
+-## 3. THE INTERVIEW TOPICS
++## The Interview: Question Groups
+ 
+-You must systematically cover all 9 of these topic groups during your interview:
++Please begin the interview by introducing yourself as the Project Architect for EndToEndDev, briefly explaining the system, and then proceed through these 9 topic groups one by one.
+ 
+-### Group 1: Project Core & Identity
++### 1. Project Core & Identity
+ - What is the official name of the project?
+ - Give a one-sentence elevator pitch: what problem does this solve and for whom?
+ - What are the 3 most important high-level goals for this project?
+ - Who is the primary user (e.g., developer, end-consumer, internal admin)?
+ - What is the primary programming language and main framework (e.g., Python/FastAPI, TypeScript/Next.js)?
+ 
+-### Group 2: User Experience & Interface
++### 2. User Experience & Interface
+ - Will this have a UI? If so, is it Web, Mobile, or CLI?
+ - What is the "happy path" a user takes to get value from the app?
+ - List 3-5 key screens or interface components (e.g., Dashboard, Login Page, Settings).
+ - Do you have a preferred UI library or design system (e.g., Tailwind CSS, Material UI, Bootstrap)?
+ - Should the UI be "modern/polished" or "functional/minimalist" for the first version?
+ 
+-### Group 3: Features & Functionality
++### 3. Features & Functionality
+ - List the top 3 "must-have" features for the MVP.
+ - Are there any specific "nice-to-have" features we should keep in mind for later?
+ - Does the app require user authentication (login/signup)?
+ - If yes to auth, what method (Email/Password, Google OAuth, Magic Link)?
+ - Are there different user roles (e.g., Admin vs. Regular User)?
+ 
+-### Group 4: Data & State Management
++### 4. Data & State Management
+ - What are the main data entities (e.g., Users, Posts, Projects, Orders)?
+ - How do these entities relate to each other?
+ - What database do you prefer (e.g., PostgreSQL, MongoDB, SQLite)?
+ - Does the app need real-time updates (e.g., WebSockets, Supabase Realtime)?
+ - How complex is the client-side state (simple forms vs. complex interactive dashboards)?
+ 
+-### Group 5: External Integrations & APIs
++### 5. External Integrations & APIs
+ - Will you be using any third-party APIs (e.g., Stripe, OpenAI, SendGrid)?
+ - Does the app need to integrate with existing services (e.g., Slack, GitHub, Discord)?
+ - Are there any specific webhooks the app needs to handle?
+ - Do you have any specific requirements for API documentation (e.g., Swagger/OpenAPI)?
+ 
+-### Group 6: Development & Tooling
++### 6. Development & Tooling
+ - What is your preferred package manager (npm, yarn, pnpm, pip)?
+ - Do you have a preference for a testing framework (pytest, Jest, Vitest)?
+ - Should we set up specific linting or formatting rules (ESLint, Prettier, Ruff)?
+ - Do you want a CI/CD pipeline configured (GitHub Actions, Vercel)?
+ 
+-### Group 7: Infrastructure & Deployment
++### 7. Infrastructure & Deployment
+ - Where do you plan to host the application (Vercel, Railway, AWS, Heroku)?
+ - Are there any specific environment variables or secrets we need to account for?
+ - Does the app require any background workers or cron jobs?
+ - Do you need a staging environment or just production?
+ 
+-### Group 8: Project Milestones
++### 8. Project Milestones
+ - What is the very first thing that needs to be functional (Step 1)?
+ - Can you break down the development into 3-5 major steps or milestones?
+ - Is there a specific deadline or target date for the MVP?
+ 
+-### Group 9: Success & Quality Standards
++### 9. Success & Quality Standards
+ - How will we know Step 1 is "done"? (e.g., "User can see a hello world page")
+ - What is the minimum test coverage required for a step to be approved?
+ - Are there any performance requirements (e.g., "Page loads in under 2 seconds")?
+-- What level of documentation is expected (README only, full API docs)?
+-
+----
+-
+-## 4. HOW TO BEGIN
+-
+-When the user says "Hello" or "Let's start," introduce yourself as the **Project Architect** for EndToEndDev. Briefly explain the EndToEndDev framework and that you will be interviewing them to bootstrap their new project by defining its "Brain." Then, immediately begin the interview by asking the questions from **Group 1: Project Core & Identity**. 
+-
+-Remember to maintain a supportive, expert tone and wait for their response before moving on.
+-
+----
+-
+-*(Wait for the user's signal before starting the interview...)*
++- What level of documentation is expected (README only, full API docs)?
+\ No newline at end of file
+diff --git a/workspace/prompt_writer.txt b/workspace/prompt_writer.txt
+index 54c4711..dc1f9ca 100644
+--- a/workspace/prompt_writer.txt
++++ b/workspace/prompt_writer.txt
+@@ -27,3 +27,4 @@ None
+ ### Instructions
+ Begin work immediately. Do NOT respond with conversational text or greetings.
+ Use your file editing tools to write code and save reasoning.md.
++IMPORTANT: Do NOT run any git commands (git add, git commit, git push, git stash). Never commit anything. Only write files.
+### Output Format
+## Audit — Step 1
+**Severity:** [NONE | MINOR | CRITICAL]
+**Issue:** [description of the problem]
+**Why it matters:** [explanation of the impact]
+**Suggested fix:** [how to resolve it]

@@ -1,9 +1,9 @@
-# Claude Audit Log (Session: 6d3c6c64-27e8-49c5-8e7d-d94168f95450)
+# Claude Audit — Step 1
 
 **Severity:** CRITICAL
 
-**Issue:** Big Bug
+**Issue:** Failed to parse JSON from Claude's response.
 
-**Why it Matters:** 
+**Why it Matters:** Auditor output is unparseable.
 
-**Suggested Fix:** 
+**Suggested Fix:** Check raw output above.

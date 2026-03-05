@@ -1,7 +1,7 @@
 import os
 import shutil
 from typing import Dict, Any, Literal
-from langgraph.graph import StateGraph, END
+from langgraph.graph import StateGraph, END, START
 from langgraph.checkpoint.memory import MemorySaver
 
 from system.state import AgentState
@@ -21,20 +21,51 @@ except ImportError:
 def ceo_review_node(state: AgentState) -> Dict[str, Any]:
     """
     Executes AFTER main.py has injected ceo_instruction via app.update_state().
-    Forwards the CEO's reply to Gemini as last_error so it knows what to do next.
+    Parses PASS / REJECT / free-text and sets ceo_route accordingly.
     """
-    instruction = state.get("ceo_instruction") or "No instruction provided."
-    return {
-        "last_error": f"CEO instruction: {instruction}",
-        "loop_count": 0,  # reset loop guard on CEO intervention
-    }
+    instruction = (state.get("ceo_instruction") or "").strip()
+    upper = instruction.upper()
+
+    if upper.startswith("PASS"):
+        note = instruction[4:].lstrip(": ").strip()
+        return {
+            "ceo_route": "pass",
+            "last_error": f"CEO note for auditor: {note}" if note else None,
+            "loop_count": 0,
+        }
+    elif upper.startswith("REJECT"):
+        note = instruction[6:].lstrip(": ").strip()
+        return {
+            "ceo_route": "reject",
+            "last_error": f"CEO feedback: {note}" if note else "CEO rejected — fix the issues and try again.",
+            "loop_count": 0,
+        }
+    elif upper.startswith("SKIP"):
+        note = instruction[4:].lstrip(": ").strip()
+        return {
+            "ceo_route": "skip",
+            "last_error": None,
+            "loop_count": 0,
+        }
+    else:
+        # Free-text treated as a Gemini instruction (old behaviour)
+        return {
+            "ceo_route": "reject",
+            "last_error": f"CEO instruction: {instruction}",
+            "loop_count": 0,
+        }
 
 
-def route_post_ceo(state: AgentState) -> Literal["gemini_node", "end"]:
-    """After CEO node: ABORT stops the graph, anything else goes back to Gemini."""
+def route_post_ceo(state: AgentState) -> Literal["auditor_node", "gemini_node", "step_approved", "end"]:
+    """Route after CEO node: PASS→auditor, SKIP→step_approved, REJECT/other→Gemini."""
     instruction = (state.get("ceo_instruction") or "").strip().upper()
     if instruction == "ABORT":
         return "end"
+    route = state.get("ceo_route", "reject")
+    if route == "pass":
+        return "auditor_node"
+    if route == "skip":
+        return "step_approved"
     return "gemini_node"
 
 def step_approved_node(state: AgentState) -> Dict[str, Any]:
@@ -146,8 +177,19 @@ def create_graph() -> StateGraph:
     workflow.add_node("step_approved", step_approved_node)
     workflow.add_node("ceo_review", ceo_review_node)
 
-    # Edges
-    workflow.set_entry_point("gemini_node")
+    # Entry point: conditional so --review / --inspect can skip ahead
+    def route_entry(state: AgentState) -> str:
+        return state.get("start_at") or "gemini_node"
+
+    workflow.add_conditional_edges(
+        START,
+        route_entry,
+        {
+            "gemini_node": "gemini_node",
+            "inspector_node": "inspector_node",
+            "auditor_node": "auditor_node",
+        },
+    )
     workflow.add_edge("gemini_node", "inspector_node")
     
     workflow.add_conditional_edges(
@@ -183,7 +225,9 @@ def create_graph() -> StateGraph:
         "ceo_review",
         route_post_ceo,
         {
+            "auditor_node": "auditor_node",
             "gemini_node": "gemini_node",
+            "step_approved": "step_approved",
             "end": END,
         },
     )

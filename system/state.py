@@ -16,3 +16,5 @@ class AgentState(TypedDict):
     session_turn_count: int             # Incremented each time the writer CLI is called
     current_arch_layer: Optional[str]   # e.g., "backend", "frontend", "infra" — for refresh trigger
     ceo_instruction: Optional[str]      # Reply injected by main.py after Telegram/terminal input
+    ceo_route: Optional[str]            # "pass" | "reject" | "skip" — set by ceo_review_node, read by router
+    start_at: Optional[str]             # Override entry node: "gemini_node" (default) | "auditor_node" | "inspector_node"

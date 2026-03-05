@@ -20,7 +20,7 @@
       "model": "auto",
       "prompt_template": "standard/reviewer.md",
       "tools": ["Read", "Grep", "Glob"],
-      "flags": ["--output-format", "json"]
+      "flags": []
     }
   }
 }

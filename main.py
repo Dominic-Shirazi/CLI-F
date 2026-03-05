@@ -86,7 +86,12 @@ def format_ceo_alert(state: dict) -> str:
 
     lines += [
         f"",
-        f"Reply with instructions, or send `ABORT` to stop the run.",
+        f"Commands:",
+        f"  PASS              → send to Claude auditor as-is",
+        f"  PASS: <note>      → send to Claude auditor with your note",
+        f"  REJECT: <reason>  → send back to Gemini with your feedback",
+        f"  SKIP              → mark step done, advance to next task",
+        f"  ABORT             → stop the run",
     ]
     return "\n".join(lines)
 
@@ -96,9 +101,19 @@ def format_ceo_alert(state: dict) -> str:
 def main():
     parser = argparse.ArgumentParser(description="EndToEndDev orchestrator")
     parser.add_argument("--profile", default=None, help="Override ACTIVE_PROFILE")
+    parser.add_argument("--review", action="store_true", help="Skip Gemini+inspector, start at Claude auditor")
+    parser.add_argument("--inspect", action="store_true", help="Skip Gemini, start at inspector")
     args = parser.parse_args()
 
     active_profile = args.profile or os.getenv("ACTIVE_PROFILE", "coder-v2")
+    if args.review:
+        start_at = "auditor_node"
+        print("[Main] --review: starting at Claude auditor (skipping Gemini + inspector)")
+    elif args.inspect:
+        start_at = "inspector_node"
+        print("[Main] --inspect: starting at inspector (skipping Gemini)")
+    else:
+        start_at = "gemini_node"
     tasks = load_master_plan()
 
     if not tasks:
@@ -128,6 +143,8 @@ def main():
         "session_turn_count": 0,
         "current_arch_layer": None,
         "ceo_instruction": None,
+        "ceo_route": None,
+        "start_at": start_at,
     }
 
     # `input_state` is the initial state on first call, None on resume.
@@ -138,7 +155,15 @@ def main():
 
         for event in app.stream(input_state, config, stream_mode="updates"):
             node_name = list(event.keys())[0] if event else "unknown"
-            print(f"  ↳ [{node_name}] done")
+            vals = list(event.values())[0] if event else {}
+            if node_name == "step_approved":
+                print(f"\n  ✓ STEP APPROVED — committed. Advancing to next task.")
+            elif node_name == "ceo_review":
+                pass  # handled below with CEO alert
+            else:
+                err = vals.get("last_error") if isinstance(vals, dict) else None
+                suffix = f" — error: {err}" if err else ""
+                print(f"  ↳ [{node_name}]{suffix}")
 
         # After stream exhausts, check if we're paused at an interrupt
         snapshot = app.get_state(config)
